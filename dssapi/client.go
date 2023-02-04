@@ -101,12 +101,8 @@ func (dss *Client) GetRecipes(project Project) ([]Recipe, error) {
 	return recipes, nil
 }
 
-type partialRecipe struct {
+type recipePayload struct {
 	Payload string `json:"payload"`
-}
-
-type partialRecipeContainer struct {
-	Recipe partialRecipe `json:"recipe"`
 }
 
 func (dss *Client) GetRecipePayload(recipe Recipe) (string, error) {
@@ -124,13 +120,13 @@ func (dss *Client) GetRecipePayload(recipe Recipe) (string, error) {
 	}
 	defer response.Body.Close()
 
-	var container partialRecipeContainer
-	err = readResponseJSON(response, &container)
+	var payload recipePayload
+	err = readResponseJSON(response, &payload)
 	if err != nil {
 		return "", err
 	}
 
-	return container.Recipe.Payload, nil
+	return payload.Payload, nil
 }
 
 func (dss *Client) SaveRecipePayload(recipe Recipe, payload string) error {
@@ -138,7 +134,7 @@ func (dss *Client) SaveRecipePayload(recipe Recipe, payload string) error {
 
 	path := fmt.Sprintf("projects/%s/recipes/%s/", recipe.ProjectKey, recipe.Name)
 
-	requestBody, err := json.Marshal(partialRecipe{Payload: payload})
+	requestBody, err := json.Marshal(recipePayload{Payload: payload})
 	if err != nil {
 		return err
 	}
