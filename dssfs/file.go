@@ -2,22 +2,29 @@ package dssfs
 
 import (
 	"context"
+	"log"
+	"sync"
+	"syscall"
 
 	"bazil.org/fuse"
+	"bazil.org/fuse/fs"
 	"github.com/kwalter94/dss-fuse/dssapi"
 )
 
 type File struct {
-	inode  uint64
-	recipe dssapi.Recipe
-	api    *dssapi.Client
+	inode   uint64
+	recipe  dssapi.Recipe
+	api     *dssapi.Client
+	handle  uint64
+	content []byte
 }
 
 func NewFile(recipe dssapi.Recipe, api *dssapi.Client) *File {
 	return &File{
-		inode:  nextInode(),
-		recipe: recipe,
-		api:    api,
+		inode:   nextInode(),
+		recipe:  recipe,
+		api:     api,
+		content: []byte{},
 	}
 }
 
@@ -34,10 +41,118 @@ func (file *File) ReloadRecipe(recipe dssapi.Recipe) {
 }
 
 func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
+	if err := file.load(); err != nil {
+		return err
+	}
+
 	attr.Inode = file.inode
 	attr.Mode = 0o644
 	attr.Ctime = file.recipe.CreatedOn()
 	attr.Mtime = file.recipe.ModifiedOn()
+	attr.Size = uint64(len(file.content))
 
 	return nil
+}
+
+func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
+	log.Printf("Opening file (%s)", file.Name())
+
+	if err := file.load(); err != nil {
+		return nil, err
+	}
+
+	if file.handle == 0 || file.content == nil {
+		file.handle = nextFileHandle()
+	}
+
+	resp.Handle = fuse.HandleID(file.handle)
+
+	return file, nil
+}
+
+func (file *File) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
+	log.Printf("Closing file (%s)", file.Name())
+
+	if file.handle == 0 {
+		return syscall.ENOTSUP
+	}
+
+	file.handle = 0
+
+	if req.ReleaseFlags&fuse.ReleaseFlush != 0 {
+		if err := file.save(); err != nil {
+			return err
+		}
+
+		file.content = []byte{}
+	}
+
+	return nil
+}
+
+func (file *File) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
+	log.Printf("Reading file(%s): %d bytes from %d", file.Name(), req.Size, req.Offset)
+
+	if file.handle == 0 {
+		return syscall.ENOTSUP
+	}
+
+	content := file.content[req.Offset:]
+
+	n := req.Size
+	if n > len(content) {
+		n = len(content)
+	}
+
+	resp.Data = content[0:n]
+
+	return nil
+}
+
+func (file *File) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
+	log.Printf("Saving file (%s)", file.Name())
+
+	if file.handle == 0 {
+		return syscall.ENOTSUP
+	}
+
+	if err := file.save(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (file *File) load() error {
+	content, err := file.api.GetRecipePayload(file.recipe)
+	if err != nil {
+		log.Printf("Error: Failed to retrieve read file (%s): %v", file.Name(), err)
+		return syscall.EIO
+	}
+
+	file.content = []byte(content)
+
+	return nil
+}
+
+func (file *File) save() error {
+	if err := file.api.SaveRecipePayload(file.recipe, string(file.content)); err != nil {
+		log.Printf("Error: Failed to save file(%s): %v", file.Name(), err)
+		return syscall.EIO
+	}
+
+	return nil
+}
+
+var fileHandlesCount uint64 = 1
+var fileHandlesMutex = sync.Mutex{}
+
+func nextFileHandle() uint64 {
+	fileHandlesMutex.Lock()
+	defer fileHandlesMutex.Unlock()
+
+	handle := fileHandlesCount
+	fileHandlesCount++
+
+	return handle
 }

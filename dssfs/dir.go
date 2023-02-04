@@ -68,7 +68,8 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 
 	recipes, err := dir.api.GetRecipes(dir.project)
 	if err != nil {
-		return nil, err
+		log.Printf("Error: Failed to fetch recipe: %v", err)
+		return nil, syscall.EIO
 	}
 
 	files := make(map[string]*File)
@@ -77,6 +78,11 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	log.Printf("Attaching project `%s` recipes", dir.project.Name)
 
 	for _, recipe := range recipes {
+		if !recipe.IsEditable() {
+			log.Printf("Skipping non-editable recipe: %s", recipe.Type)
+			continue
+		}
+
 		file := dir.getFile(recipe.Name)
 
 		if file == nil {
