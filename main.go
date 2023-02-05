@@ -3,10 +3,17 @@ package main
 import (
 	"log"
 	"os"
+	"time"
 
 	"github.com/kwalter94/dss-fuse/dssapi"
 	"github.com/kwalter94/dss-fuse/dssfs"
 )
+
+var DssConnectTimeout time.Duration
+
+func init() {
+	DssConnectTimeout = time.Second * 30
+}
 
 func main() {
 	if len(os.Args) != 2 {
@@ -23,7 +30,7 @@ func main() {
 		panic("No default instance specified in user config!")
 	}
 
-	dssClient, err := dssapi.NewDssClient(instance.Url, instance.ApiKey)
+	dssClient, err := dssapi.NewDssClient(instance.Url, instance.ApiKey, DssConnectTimeout)
 	if err != nil {
 		panic(err)
 	}

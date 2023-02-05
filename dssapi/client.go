@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type Client struct {
@@ -16,12 +17,12 @@ type Client struct {
 	httpClient http.Client
 }
 
-func NewDssClient(url string, apiKey string) (*Client, error) {
+func NewDssClient(url string, apiKey string, timeout time.Duration) (*Client, error) {
 	if url == "" {
 		return nil, fmt.Errorf("url can not be be blank")
 	}
 
-	client := Client{baseUrl: url, apiKey: apiKey}
+	client := Client{url, apiKey, http.Client{Timeout: timeout}}
 	err := client.TestConnection()
 	if err != nil {
 		return nil, err
