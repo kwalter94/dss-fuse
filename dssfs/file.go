@@ -73,19 +73,18 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 func (file *File) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 	log.Printf("Closing file (%s)", file.Name())
 
-	if file.handle == 0 {
+	if file.handle == 0 || file.handle != uint64(req.Handle) {
 		return syscall.ENOTSUP
 	}
-
-	file.handle = 0
 
 	if req.ReleaseFlags&fuse.ReleaseFlush != 0 {
 		if err := file.save(); err != nil {
 			return err
 		}
-
-		file.content = []byte{}
 	}
+
+	file.handle = 0
+	file.content = []byte{}
 
 	return nil
 }
@@ -112,7 +111,27 @@ func (file *File) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.Re
 func (file *File) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
 	log.Printf("Saving file (%s)", file.Name())
 
-	if file.handle == 0 {
+	if file.handle == 0 || file.handle != uint64(req.Handle) {
+		return syscall.ENOTSUP
+	}
+
+	if req.Offset >= int64(len(file.content)) {
+		file.content = append(file.content, req.Data...)
+	} else {
+		file.content = append(file.content[0:req.Offset], req.Data...)
+	}
+
+	resp.Size = len(req.Data)
+
+	if err := file.save(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (file *File) Flush(ctx context.Context, req *fuse.FlushRequest) error {
+	if file.handle == 0 || file.handle != uint64(req.Handle) {
 		return syscall.ENOTSUP
 	}
 
