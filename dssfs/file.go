@@ -3,6 +3,7 @@ package dssfs
 import (
 	"context"
 	"log"
+	"os"
 	"sync"
 	"syscall"
 
@@ -50,6 +51,8 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Ctime = file.recipe.CreatedOn()
 	attr.Mtime = file.recipe.ModifiedOn()
 	attr.Size = uint64(len(file.content))
+	attr.Uid = uint32(os.Getuid())
+	attr.Gid = uint32(os.Getgid())
 
 	return nil
 }

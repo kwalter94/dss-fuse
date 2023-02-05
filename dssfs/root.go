@@ -25,6 +25,8 @@ func NewRootDir(api *dssapi.Client) (*Root, error) {
 func (root *Root) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Inode = 1
 	attr.Mode = os.ModeDir | 0o555
+	attr.Uid = uint32(os.Getuid())
+	attr.Gid = uint32(os.Getgid())
 
 	return nil
 }

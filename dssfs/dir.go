@@ -42,6 +42,8 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Mode = os.ModeDir | 0o555
 	attr.Mtime = dir.project.DateModified()
 	attr.Ctime = dir.project.DateCreated()
+	attr.Uid = uint32(os.Getuid())
+	attr.Gid = uint32(os.Getgid())
 
 	return nil
 }
