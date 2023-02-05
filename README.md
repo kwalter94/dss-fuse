@@ -20,7 +20,13 @@ As simple as:
 go build
 ```
 
-# Usage
+# Set up and Usage
+
+- Install `fusermount3`... On Debian/Ubuntu do:
+
+```sh
+sudo apt install fuse3
+```
 
 - First [create a configuration file for DSS](https://github.com/dataiku/dss-integration-pycharm#configuration)
 in the dataiku config directory (~/.dataiku). Note that this
@@ -61,10 +67,10 @@ ls ~/dss
 
 # Caveats
 
-- Windows is not supported (might work in WSL - I can't guarantee it though)
+- Windows is not supported (works fine in WSL though)
 - [Mac is not supported!](https://github.com/bazil/fuse/issues/224)
 - No way to run recipes as in PyCharm or vscode. I am planning
 on adding a separate binary that will do this.
-- Bugs ahoy!!! I new to
+- Bugs ahoy!!! I am new to
 [FUSE](https://www.kernel.org/doc/html/latest/filesystems/fuse.html)
 and have very little experience with Go
