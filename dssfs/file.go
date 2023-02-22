@@ -20,6 +20,13 @@ type File struct {
 	content []byte
 }
 
+// Don't want multiple files being loaded from Dataiku at the same time
+var fileLoadLock sync.Mutex
+
+func init() {
+	fileLoadLock = sync.Mutex{}
+}
+
 func NewFile(recipe dssapi.Recipe, api *dssapi.Client) *File {
 	return &File{
 		inode:   nextInode(),
@@ -59,12 +66,13 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) error {
 
 func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
 	log.Printf("Opening file (%s)", file.Name())
-
-	if err := file.load(); err != nil {
-		return nil, err
+	if len(file.content) == 0 {
+		if err := file.load(); err != nil {
+			return nil, err
+		}
 	}
 
-	if file.handle == 0 || file.content == nil {
+	if file.handle == 0 {
 		file.handle = nextFileHandle()
 	}
 
@@ -75,7 +83,6 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 
 func (file *File) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 	log.Printf("Closing file (%s)", file.Name())
-
 	if file.handle == 0 || file.handle != uint64(req.Handle) {
 		return syscall.ENOTSUP
 	}
@@ -94,7 +101,6 @@ func (file *File) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 
 func (file *File) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
 	log.Printf("Reading file(%s): %d bytes from %d", file.Name(), req.Size, req.Offset)
-
 	if file.handle == 0 {
 		return syscall.ENOTSUP
 	}
@@ -113,6 +119,8 @@ func (file *File) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.Re
 
 func (file *File) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
 	log.Printf("Saving file (%s)", file.Name())
+	// TODO: Remove me when ready to go crazy!
+	log.Fatal("Error: Write operation not allowed!!!")
 
 	if file.handle == 0 || file.handle != uint64(req.Handle) {
 		return syscall.ENOTSUP
@@ -146,6 +154,10 @@ func (file *File) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 }
 
 func (file *File) load() error {
+	log.Printf("Loading file: %s", file.Name())
+	fileLoadLock.Lock()
+	defer fileLoadLock.Unlock()
+
 	content, err := file.api.GetRecipePayload(file.recipe)
 	if err != nil {
 		log.Printf("Error: Failed to retrieve read file (%s): %v", file.Name(), err)
@@ -153,6 +165,7 @@ func (file *File) load() error {
 	}
 
 	file.content = []byte(content)
+	log.Printf("Loaded %d bytes from file: %s", len(file.content), file.Name())
 
 	return nil
 }

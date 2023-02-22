@@ -6,16 +6,20 @@ import (
 	"os"
 	"sync"
 	"syscall"
+	"time"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	"github.com/kwalter94/dss-fuse/dssapi"
 )
 
+var DSS_DATA_CACHE_PERIOD time.Duration = time.Minute * 10
+
 type Root struct {
-	api             *dssapi.Client
-	dirs            map[string]*Dir
-	dirsAccessMutex sync.RWMutex
+	api               *dssapi.Client
+	dirs              map[string]*Dir
+	dirsAccessMutex   sync.RWMutex
+	cacheExpiresAfter time.Time
 }
 
 func NewRootDir(api *dssapi.Client) (*Root, error) {
@@ -32,14 +36,17 @@ func (root *Root) Attr(ctx context.Context, attr *fuse.Attr) error {
 }
 
 func (root *Root) Lookup(ctx context.Context, name string) (fs.Node, error) {
-	root.dirsAccessMutex.RLock()
-	defer root.dirsAccessMutex.RUnlock()
-
 	log.Printf("Looking up directory: %s", name)
+	if err := root.loadDirs(); err != nil {
+		return nil, err
+	}
 
-	if dir := root.getDir(name); dir != nil {
+	if dir, exists := root.dirs[name]; exists {
+		log.Printf("Found directory: %s", name)
 		return dir, nil
 	}
+
+	log.Printf("Error: Directory not found: %s", name)
 
 	return nil, syscall.ENOENT
 }
@@ -50,39 +57,46 @@ func (root *Root) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 }
 
 func (root *Root) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
-	root.dirsAccessMutex.Lock()
-	defer root.dirsAccessMutex.Unlock()
-
-	projects, err := root.api.GetProjects()
-	if err != nil {
-		log.Printf("Error: Failed to load projects: %v", err)
-		return nil, syscall.EIO
+	if err := root.loadDirs(); err != nil {
+		return nil, err
 	}
 
-	dirents := make([]fuse.Dirent, 0, len(projects))
+	dirents := make([]fuse.Dirent, 0, len(root.dirs))
 
-	for _, project := range projects {
-		dir := root.getDir(project.Name)
-
-		if dir == nil {
-			dir = NewDir(project, root.api)
-		} else {
-			dir.ReloadProject(project)
-		}
-
-		root.dirs[project.Name] = dir
-		dirents = append(dirents, fuse.Dirent{Inode: dir.Inode(), Type: fuse.DT_Dir, Name: project.Name})
+	for _, dir := range root.dirs {
+		dirents = append(dirents, fuse.Dirent{
+			Inode: dir.Inode(),
+			Type:  fuse.DT_Dir,
+			Name:  dir.Name(),
+		})
 	}
-
-	log.Printf("Loaded %d projects... %v", len(dirents), dirents[:5])
 
 	return dirents, nil
 }
 
-func (root *Root) getDir(name string) *Dir {
-	if dir, exists := root.dirs[name]; exists {
-		return dir
+func (root *Root) loadDirs() error {
+	log.Print("Loading root directory...")
+	root.dirsAccessMutex.Lock()
+	defer root.dirsAccessMutex.Unlock()
+
+	if !time.Now().After(root.cacheExpiresAfter) {
+		log.Print("Using cached projects")
+		return nil
 	}
+
+	projects, err := root.api.GetProjects()
+	if err != nil {
+		log.Printf("Error: Failed to load projects: %v", err)
+		return syscall.EIO
+	}
+
+	for _, project := range projects {
+		dir := NewDir(project, root.api)
+		root.dirs[dir.Name()] = dir
+	}
+
+	root.cacheExpiresAfter = time.Now().Add(DSS_DATA_CACHE_PERIOD)
+	log.Printf("Loaded %d projects", len(projects))
 
 	return nil
 }

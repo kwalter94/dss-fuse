@@ -6,6 +6,7 @@ import (
 	"os"
 	"sync"
 	"syscall"
+	"time"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
@@ -13,11 +14,12 @@ import (
 )
 
 type Dir struct {
-	inode            uint64
-	project          dssapi.Project
-	files            map[string]*File
-	filesAccessMutex sync.RWMutex
-	api              *dssapi.Client
+	inode             uint64
+	project           dssapi.Project
+	files             map[string]*File
+	filesAccessMutex  sync.RWMutex
+	api               *dssapi.Client
+	cacheExpiresAfter time.Time
 }
 
 func NewDir(project dssapi.Project, api *dssapi.Client) *Dir {
@@ -30,7 +32,7 @@ func NewDir(project dssapi.Project, api *dssapi.Client) *Dir {
 }
 
 func (dir *Dir) Name() string {
-	return dir.project.ProjectKey
+	return dir.project.Name
 }
 
 func (dir *Dir) Inode() uint64 {
@@ -49,10 +51,13 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 }
 
 func (dir *Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
-	dir.filesAccessMutex.RLock()
-	defer dir.filesAccessMutex.RUnlock()
+	log.Printf("Looking up file: %s", name)
+	if err := dir.loadFiles(); err != nil {
+		return nil, err
+	}
 
-	if file := dir.getFile(name); file != nil {
+	if file, exists := dir.files[name]; exists {
+		log.Printf("File found: %s", name)
 		return file, nil
 	}
 
@@ -65,19 +70,44 @@ func (dir *Dir) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Open
 }
 
 func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
+	if err := dir.loadFiles(); err != nil {
+		return nil, err
+	}
+
+	dirents := make([]fuse.Dirent, 0, len(dir.files))
+
+	log.Printf("Attaching project `%s` recipes", dir.project.Name)
+
+	for _, file := range dir.files {
+		dirent := fuse.Dirent{
+			Inode: file.Inode(),
+			Type:  fuse.DT_File,
+			Name:  file.Name(),
+		}
+
+		dirents = append(dirents, dirent)
+	}
+
+	return dirents, nil
+}
+
+func (dir *Dir) loadFiles() error {
+	log.Printf("Loading project files: %s...", dir.project.Name)
 	dir.filesAccessMutex.Lock()
 	defer dir.filesAccessMutex.Unlock()
+
+	if !time.Now().After(dir.cacheExpiresAfter) {
+		log.Print("Using cached project files")
+		return nil
+	}
+
+	dir.files = make(map[string]*File)
 
 	recipes, err := dir.api.GetRecipes(dir.project)
 	if err != nil {
 		log.Printf("Error: Failed to fetch recipe: %v", err)
-		return nil, syscall.EIO
+		return syscall.EIO
 	}
-
-	files := make(map[string]*File)
-	dirents := make([]fuse.Dirent, 0, len(recipes))
-
-	log.Printf("Attaching project `%s` recipes", dir.project.Name)
 
 	for _, recipe := range recipes {
 		if !recipe.IsEditable() {
@@ -85,37 +115,11 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 			continue
 		}
 
-		file := dir.getFile(recipe.Name)
-
-		if file == nil {
-			file = NewFile(recipe, dir.api)
-		} else {
-			file.ReloadRecipe(recipe)
-		}
-
-		dirent := fuse.Dirent{
-			Inode: file.Inode(),
-			Type:  fuse.DT_File,
-			Name:  recipe.Name,
-		}
-
-		files[recipe.Name] = file
-		dirents = append(dirents, dirent)
+		file := NewFile(recipe, dir.api)
+		dir.files[recipe.Name] = file
 	}
 
-	dir.files = files
-
-	return dirents, nil
-}
-
-func (dir *Dir) ReloadProject(project dssapi.Project) {
-	dir.project = project
-}
-
-func (dir *Dir) getFile(name string) *File {
-	if file, exists := dir.files[name]; exists {
-		return file
-	}
+	dir.cacheExpiresAfter = time.Now().Add(DSS_DATA_CACHE_PERIOD)
 
 	return nil
 }
